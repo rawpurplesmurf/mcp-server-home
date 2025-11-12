@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  mcp-app:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"  # MCP Server
+      - "8001:8001"  # MCP Client  
+      - "5173:5173"  # Web UI
+    environment:
+      # Server environment (override defaults)
+      - REDIS_HOST=redis
+      - HA_URL=${HA_URL:-http://homeassistant:8123}
+      - HA_TOKEN=${HA_TOKEN:-}
+      # Client environment  
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - MYSQL_HOST=mysql
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-mcp_password}
+    depends_on:
+      - redis
+      - mysql
+    networks:
+      - mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_DATABASE=mcp_chat
+      - MYSQL_USER=mcp_user
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-mcp_password}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-root_password}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    networks:
+      - mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  redis_data:
+  mysql_data:
+
+networks:
+  mcp-network:
+    driver: bridge

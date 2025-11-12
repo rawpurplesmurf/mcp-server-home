@@ -1,0 +1,11 @@
+# Test dependencies
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+httpx==0.25.2
+faker==20.1.0
+
+# Security testing
+# Using development version for Python 3.14 support
+# Will switch to stable version when 1.8.7+ is released
+bandit @ git+https://github.com/PyCQA/bandit.git@main

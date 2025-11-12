@@ -1,0 +1,73 @@
+# Git and version control
+.git
+.gitignore
+.github
+
+# Environment files (will be created from templates)
+.env
+.env.client
+
+# Python cache and virtual environments
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv
+venv/
+env/
+
+# Node.js dependencies and build artifacts
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test files and coverage
+tests/
+ui/tests/
+test_*.py
+htmlcov/
+.coverage
+.pytest_cache/
+ui/playwright-report/
+ui/test-results/
+
+# Logs
+logs/
+*.log
+
+# Documentation (not needed in runtime)
+docs/
+README.md
+*.md
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Development scripts (use Docker startup script instead)
+scripts/dev.sh
+scripts/run-tests.sh
+scripts/security-check.sh
+scripts/setup.sh
+scripts/stop-dev.sh
+scripts/test.sh
+
+# MySQL setup script (not needed in container)
+scripts/setup-mysql.sh
+
+# Build artifacts that will be recreated
+ui/dist/

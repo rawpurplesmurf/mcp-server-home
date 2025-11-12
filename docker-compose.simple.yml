@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  mcp-app:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"  # MCP Server
+      - "8001:8001"  # MCP Client  
+      - "5173:5173"  # Web UI
+    environment:
+      # Point to external services if available
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - HA_URL=${HA_URL:-}
+      - HA_TOKEN=${HA_TOKEN:-}
+      - REDIS_HOST=${REDIS_HOST:-}
+      - MYSQL_HOST=${MYSQL_HOST:-}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

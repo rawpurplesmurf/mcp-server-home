@@ -1,0 +1,36 @@
+{
+  "name": "mcp-server",
+  "version": "2.2.0",
+  "description": "Model Context Protocol (MCP) Server with Client and Web UI",
+  "private": true,
+  "scripts": {
+    "setup": "bash scripts/setup.sh",
+    "start": "bash scripts/start.sh",
+    "test": "bash scripts/run-tests.sh",
+    "test:backend": "pytest tests/ --cov=. --cov-report=term-missing --cov-report=html -v",
+    "test:ui": "cd ui && npx playwright test",
+    "test:security": "bash scripts/security-check.sh",
+    "install:all": "pip install -r requirements.txt && pip install -r requirements-test.txt && cd ui && npm install && npx playwright install chromium",
+    "install:ui": "cd ui && npm install && npx playwright install chromium",
+    "dev:server": "uvicorn server:app --reload --port 8000",
+    "dev:client": "uvicorn client:app --reload --port 8001",
+    "dev:ui": "cd ui && npm run dev"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "fastapi",
+    "ollama",
+    "llm",
+    "ntp",
+    "network-tools"
+  ],
+  "author": "",
+  "license": "ISC",
+  "workspaces": [
+    "ui"
+  ],
+  "dependencies": {
+    "vite": "^7.2.2"
+  }
+}
