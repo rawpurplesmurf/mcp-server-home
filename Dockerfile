@@ -1,10 +1,12 @@
 # Multi-stage Dockerfile for MCP Server + Client + UI
-FROM node:18-alpine AS ui-builder
+FROM node:22-alpine AS ui-builder
 
 # Build the React UI
 WORKDIR /app/ui
 COPY ui/package*.json ./
-RUN npm ci --only=production
+
+# Install all dependencies (including devDependencies needed for build)
+RUN npm ci
 
 COPY ui/ ./
 RUN npm run build

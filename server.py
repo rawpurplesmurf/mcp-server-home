@@ -6,6 +6,7 @@ import re
 import hashlib
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
@@ -43,7 +44,13 @@ SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))
 # Home Assistant Configuration
 HA_URL = os.getenv("HA_URL", "http://ha.internal")
 HA_TOKEN = os.getenv("HA_TOKEN", "")
+
+# Timezone Configuration
+LOCAL_TIMEZONE = os.getenv("LOCAL_TIMEZONE", "America/Los_Angeles")
 HA_CACHE_TTL = int(os.getenv("HA_CACHE_TTL", "30"))
+
+# Sunrise/Sunset API Configuration (configured in client .env)
+SUN_API_URL = "https://api.sunrise-sunset.org/json"
 
 redis_client: Optional[Redis] = None
 ha_service: Optional['HomeAssistantService'] = None
@@ -372,6 +379,25 @@ class ToolService:
                 "required": ["action"]
             },
         ),
+        "get_sun_times": ToolDefinition(
+            name="get_sun_times",
+            description="Get sunrise and sunset times for a specific location and date. Returns sunrise, sunset, solar noon, day length, and twilight times. Use for queries like 'when is sunrise?', 'what time is sunset?', 'when does the sun set today?'.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "date": {
+                        "type": "string",
+                        "description": "Date in YYYY-MM-DD format (e.g., '2024-12-25'). Defaults to today if not specified."
+                    },
+                    "formatted": {
+                        "type": "integer",
+                        "enum": [0, 1],
+                        "description": "0 for ISO 8601 format (24-hour), 1 for 12-hour AM/PM format. Defaults to 0."
+                    }
+                },
+                "required": []
+            },
+        ),
     }
 
     def list_tools(self) -> List[ToolDefinition]:
@@ -379,11 +405,20 @@ class ToolService:
 
     async def _execute_ntp_sync(self) -> ToolCallResponse:
         """Helper to execute the blocking NTP sync logic in a separate thread."""
+        try:
+            local_tz = ZoneInfo(LOCAL_TIMEZONE)
+        except Exception:
+            local_tz = ZoneInfo("America/Los_Angeles")  # Fallback
+            
         if not NTP_CLIENT_AVAILABLE:
             now_utc = datetime.now(timezone.utc)
+            now_local = now_utc.astimezone(local_tz)
             return ToolCallResponse(status="success", result_data={
                 "timestamp_utc": now_utc.isoformat(),
-                "readable_time": now_utc.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "timestamp_local": now_local.isoformat(),
+                "readable_time_utc": now_utc.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "readable_time_local": now_local.strftime("%Y-%m-%d %I:%M:%S %p %Z"),
+                "timezone": LOCAL_TIMEZONE,
                 "source": "System Time (NTP client unavailable)"
             })
             
@@ -391,10 +426,14 @@ class ToolService:
         server_to_use = self.NTP_SERVERS[0]
         try:
             response = await asyncio.to_thread(c.request, server_to_use, version=3, timeout=NTP_TIMEOUT)
-            ntp_time = datetime.fromtimestamp(response.tx_time, timezone.utc)
+            ntp_time_utc = datetime.fromtimestamp(response.tx_time, timezone.utc)
+            ntp_time_local = ntp_time_utc.astimezone(local_tz)
             return ToolCallResponse(status="success", result_data={
-                "timestamp_utc": ntp_time.isoformat(),
-                "readable_time": ntp_time.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "timestamp_utc": ntp_time_utc.isoformat(),
+                "timestamp_local": ntp_time_local.isoformat(),
+                "readable_time_utc": ntp_time_utc.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "readable_time_local": ntp_time_local.strftime("%Y-%m-%d %I:%M:%S %p %Z"),
+                "timezone": LOCAL_TIMEZONE,
                 "offset_ms": round(response.offset * 1000, 2),
                 "source": f"NTP Server: {server_to_use}"
             })
@@ -770,6 +809,63 @@ class ToolService:
         except Exception as e:
             return ToolCallResponse(status="error", result_data={"error": f"Failed to control switches: {e}"})
 
+    async def _execute_get_sun_times(self, date: Optional[str] = None, formatted: int = 0, lat: Optional[float] = None, lng: Optional[float] = None) -> ToolCallResponse:
+        """Get sunrise and sunset times from sunrise-sunset.org API."""
+        if lat is None or lng is None:
+            return ToolCallResponse(status="error", result_data={
+                "error": "Latitude and longitude not configured. Please set SUN_LAT and SUN_LNG in .env.client"
+            })
+        
+        try:
+            # Build request URL
+            params = {
+                "lat": lat,
+                "lng": lng,
+                "formatted": formatted
+            }
+            
+            # Add date if provided
+            if date:
+                params["date"] = date
+            
+            # Make API request
+            async with httpx.AsyncClient() as client:
+                response = await client.get(SUN_API_URL, params=params, timeout=10.0)
+                response.raise_for_status()
+                data = response.json()
+                
+                if data.get("status") != "OK":
+                    return ToolCallResponse(status="error", result_data={
+                        "error": f"Sunrise-Sunset API error: {data.get('status', 'UNKNOWN')}"
+                    })
+                
+                results = data.get("results", {})
+                
+                return ToolCallResponse(status="success", result_data={
+                    "sunrise": results.get("sunrise"),
+                    "sunset": results.get("sunset"),
+                    "solar_noon": results.get("solar_noon"),
+                    "day_length": results.get("day_length"),
+                    "civil_twilight_begin": results.get("civil_twilight_begin"),
+                    "civil_twilight_end": results.get("civil_twilight_end"),
+                    "nautical_twilight_begin": results.get("nautical_twilight_begin"),
+                    "nautical_twilight_end": results.get("nautical_twilight_end"),
+                    "astronomical_twilight_begin": results.get("astronomical_twilight_begin"),
+                    "astronomical_twilight_end": results.get("astronomical_twilight_end"),
+                    "location": {"latitude": lat, "longitude": lng},
+                    "date": date if date else "today",
+                    "timezone": "UTC" if formatted == 0 else "Local"
+                })
+                
+        except httpx.HTTPError as e:
+            return ToolCallResponse(status="error", result_data={
+                "error": f"Failed to fetch sun times: {e}"
+            })
+        except Exception as e:
+            return ToolCallResponse(status="error", result_data={
+                "error": f"Unexpected error getting sun times: {e}"
+            })
+
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> ToolCallResponse:
         if tool_name not in self.TOOLS:
@@ -806,6 +902,16 @@ class ToolService:
                     action=action,
                     entity_id=arguments.get("entity_id"),
                     name_filter=arguments.get("name_filter")
+                )
+            elif tool_name == "get_sun_times":
+                # Get lat/lng from arguments (passed by client)
+                lat = arguments.get("lat")
+                lng = arguments.get("lng")
+                return await self._execute_get_sun_times(
+                    date=arguments.get("date"),
+                    formatted=arguments.get("formatted", 0),
+                    lat=lat,
+                    lng=lng
                 )
             else:
                  return ToolCallResponse(status="error", result_data={"error": "Tool logic not yet implemented."})

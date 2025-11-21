@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-config
+  namespace: mcp-system
+data:
+  # Server config
+  REDIS_HOST: "synology4"
+  REDIS_PORT: "6379"
+  SERVER_PORT: "8000"
+  HA_CACHE_TTL: "30"
+  NTP_SERVER: "192.168.0.100"
+  NTP_BACKUP_SERVER: "pool.ntp.org"
+  NTP_TIMEOUT: "5"
+  
+  # Client config
+  MCP_SERVER_URL: "http://mcp-server-service.mcp-system.svc.cluster.local:8000"
+  CLIENT_URL: "http://mcp-client.microk8s.internal"
+  MYSQL_HOST: "synology4"
+  MYSQL_PORT: "3306"
+  MYSQL_DATABASE: "mcp_chat"
+  MYSQL_USER: "mcp_chat"
+  MYSQL_POOL_SIZE: "5"
+  OLLAMA_MODEL: "qwen2.5:7b-instruct"
+  LOG_LEVEL: "INFO"
+  
+  # Location config
+  SUN_LAT: "47.0012"
+  SUN_LNG: "-122.5421"
+  LOCAL_TIMEZONE: "America/Los_Angeles"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mcp-secrets
+  namespace: mcp-system
+type: Opaque
+stringData:
+  # Update these with your actual values
+  HA_URL: "http://ha.internal"
+  HA_TOKEN: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiIwNDQ3MDg2M2JjZTg0MTM0YjMyZjA1ZmM0ODJjODQ4YiIsImlhdCI6MTc2MjkxNjg4MCwiZXhwIjoyMDc4Mjc2ODgwfQ.bBp8-AQpq-J9cj9N5jPSUEQVs0U7hpM59XORKW9r9lk"
+  OLLAMA_URL: "http://192.168.0.34:11434"
+  WHISPER_URL: "macmini:10300"
+  MYSQL_PASSWORD: "mcp_chat"

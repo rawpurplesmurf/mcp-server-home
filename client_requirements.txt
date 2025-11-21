@@ -4,3 +4,7 @@ pydantic
 requests
 python-dotenv
 httpx
+redis
+aiomysql
+wyoming
+python-multipart

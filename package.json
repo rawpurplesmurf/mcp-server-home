@@ -12,8 +12,8 @@
     "test:security": "bash scripts/security-check.sh",
     "install:all": "pip install -r requirements.txt && pip install -r requirements-test.txt && cd ui && npm install && npx playwright install chromium",
     "install:ui": "cd ui && npm install && npx playwright install chromium",
-    "dev:server": "uvicorn server:app --reload --port 8000",
-    "dev:client": "uvicorn client:app --reload --port 8001",
+    "dev:server": "uvicorn server:app --reload --host 0.0.0.0 --port 8000",
+    "dev:client": "uvicorn client:app --reload --host 0.0.0.0 --port 8001",
     "dev:ui": "cd ui && npm run dev"
   },
   "keywords": [

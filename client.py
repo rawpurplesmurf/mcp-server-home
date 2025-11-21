@@ -4,12 +4,23 @@ import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import hashlib
+import asyncio
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import httpx
 from dotenv import load_dotenv
+from fastapi import File, UploadFile
+
+# Wyoming protocol imports
+try:
+    from wyoming.client import AsyncTcpClient
+    from wyoming.audio import AudioChunk, AudioStart, AudioStop
+    from wyoming.asr import Transcribe, Transcript
+    WYOMING_AVAILABLE = True
+except ImportError:
+    WYOMING_AVAILABLE = False
 
 # Redis import (optional)
 try:
@@ -34,7 +45,7 @@ load_dotenv(".env.client")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8000")
-CLIENT_PORT = int(os.getenv("CLIENT_PORT", "8001"))
+CLIENT_URL = os.getenv("CLIENT_URL", "http://localhost:8001")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
@@ -47,9 +58,21 @@ MYSQL_USER = os.getenv("MYSQL_USER", "mcp_user")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
 MYSQL_POOL_SIZE = int(os.getenv("MYSQL_POOL_SIZE", "5"))
 
+# Whisper Configuration
+WHISPER_URL = os.getenv("WHISPER_URL", "http://localhost:9000")
+
+# Sunrise/Sunset Configuration
+SUN_LAT = float(os.getenv("SUN_LAT", "0.0")) if os.getenv("SUN_LAT") else None
+SUN_LNG = float(os.getenv("SUN_LNG", "0.0")) if os.getenv("SUN_LNG") else None
+LOCAL_TIMEZONE = os.getenv("LOCAL_TIMEZONE", "UTC")
+
 # Setup logging
 logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 logger = logging.getLogger(__name__)
+
+# Log Wyoming availability
+if not WYOMING_AVAILABLE:
+    logger.warning("Wyoming not available - voice transcription disabled. Install with: pip install wyoming")
 
 # Redis client
 redis_client = None
@@ -109,7 +132,12 @@ app = FastAPI(
 # Add CORS middleware to allow requests from the UI
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],  # Vite dev server
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://mcp-ui.microk8s.internal",
+        "http://mcp-ui.microk8s.internal:80"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -213,6 +241,8 @@ Tool Results:
 
 User Question: {user_message}
 
+Context: The user's local timezone is {LOCAL_TIMEZONE}. When presenting times, convert UTC times to this timezone and use a natural, conversational format.
+
 Provide a clear, helpful response using the information from the tools."""
         else:
             # First call - determine if we need tools
@@ -220,12 +250,15 @@ Provide a clear, helpful response using the information from the tools."""
 
 User request: "{user_message}"
 
+Context: The user's local timezone is {LOCAL_TIMEZONE}.
+
 Available Tools:
 1. get_network_time - Get current accurate time from NTP server
 2. ping_host - Test network connectivity to a hostname
 3. ha_get_device_state - Get state of Home Assistant devices/sensors (temperature, humidity, status)
 4. ha_control_light - Control Home Assistant lights (turn on/off, brightness)
 5. ha_control_switch - Control Home Assistant switches (turn on/off)
+6. get_sun_times - Get sunrise, sunset, solar noon times for configured location
 
 Instructions:
 - For time/date queries: USE_TOOL:get_network_time:{{}}
@@ -233,6 +266,7 @@ Instructions:
 - For temperature/sensor queries: USE_TOOL:ha_get_device_state:{{"domain": "sensor", "name_filter": "LOCATION"}}
 - For light control: USE_TOOL:ha_control_light:{{"action": "turn_on|turn_off|toggle", "name_filter": "ROOM"}}
 - For switch control: USE_TOOL:ha_control_switch:{{"action": "turn_on|turn_off|toggle", "name_filter": "DEVICE"}}
+- For sunrise/sunset queries: USE_TOOL:get_sun_times:{{}}
 - Otherwise, provide a helpful conversational response
 
 Your response:"""
@@ -419,34 +453,12 @@ class ChatService:
         )
     
     async def _check_direct_tool_usage(self, message: str, session_id: str) -> Optional[Dict[str, Any]]:
-        """Check if the message should directly trigger a tool without LLM processing."""
+        """Check if the message should directly trigger a tool without LLM processing.
+        Only used for Home Assistant device control where intent is clear."""
         logger.info(f"Checking direct tool usage for message: '{message}'")
         
         message_lower = message.lower()
         logger.info(f"Message lowercase: '{message_lower}'")
-        
-        # Check for time-related questions
-        time_keywords = ["time", "date", "current time", "what time", "when is it", "ntp"]
-        
-        detected_time_keywords = [kw for kw in time_keywords if kw in message_lower]
-        
-        if detected_time_keywords:
-            logger.info(f"Found time keyword(s): {detected_time_keywords} - triggering get_network_time tool")
-            result = await self.mcp_client.call_tool("get_network_time", {}, session_id)
-            if result["status"] == "success":
-                time_data = result["result_data"]
-                response_text = f"The current time according to NTP server ({time_data.get('source', 'unknown source')}) is: {time_data.get('readable_time', 'unknown time')}"
-                return {
-                    "response": response_text, 
-                    "tools_used": ["get_network_time"],
-                    "tool_results": {"get_network_time": result},
-                    "pattern_matched": "time_query",
-                    "keywords_detected": detected_time_keywords,
-                    "extracted_params": {
-                        "query_type": "current_time"
-                    },
-                    "tool_arguments": {}
-                }
         
         # Check for light control
         light_keywords = ["light", "lights", "lamp", "brightness", "dim", "bright"]
@@ -634,45 +646,6 @@ class ChatService:
                             "tool_results": {"ha_control_switch": result}
                         }
         
-        # Check for ping/connectivity questions
-        ping_keywords = ["ping", "connectivity", "connect", "reach", "test"]
-        
-        detected_ping_keywords = [kw for kw in ping_keywords if kw in message_lower]
-        
-        if detected_ping_keywords:
-            # Try to extract hostname from the message
-            words = message.split()
-            hostname = "google.com"  # default
-            extracted_hostname = None
-            for word in words:
-                if "." in word and not word.startswith("http") and len(word) > 3:
-                    hostname = word.strip(".,!?")
-                    extracted_hostname = word
-                    break
-            
-            tool_arguments = {"hostname": hostname}
-            
-            result = await self.mcp_client.call_tool("ping_host", tool_arguments, session_id)
-            if result["status"] == "success":
-                ping_data = result["result_data"]
-                response_text = f"Ping test to {hostname}: {ping_data.get('status', 'unknown status')}. "
-                if ping_data.get('packet_loss_percent', 0) == 0:
-                    response_text += f"Connection successful with {ping_data.get('average_latency_ms', 'unknown')} ms average latency."
-                else:
-                    response_text += f"{ping_data.get('packet_loss_percent', 'unknown')}% packet loss detected."
-                return {
-                    "response": response_text,
-                    "tools_used": ["ping_host"],
-                    "tool_results": {"ping_host": result},
-                    "pattern_matched": "ping_query",
-                    "keywords_detected": detected_ping_keywords,
-                    "extracted_params": {
-                        "hostname": hostname,
-                        "extracted_from_message": extracted_hostname or "(default: google.com)"
-                    },
-                    "tool_arguments": tool_arguments
-                }
-        
         return None
     
     async def _handle_tool_usage(self, llm_response: str, session_id: str) -> Optional[Dict[str, Any]]:
@@ -725,6 +698,13 @@ class ChatService:
                 arguments = {}
             
             logger.info(f"Executing tool: {tool_name} with arguments: {arguments}")
+            
+            # Inject lat/lng for sun_times tool if not already provided
+            if tool_name == "get_sun_times":
+                if "lat" not in arguments and SUN_LAT is not None:
+                    arguments["lat"] = SUN_LAT
+                if "lng" not in arguments and SUN_LNG is not None:
+                    arguments["lng"] = SUN_LNG
             
             # Execute the tool
             result = await self.mcp_client.call_tool(tool_name, arguments, session_id)
@@ -860,7 +840,7 @@ async def startup_event():
     """Initialize the chat service on startup."""
     await chat_service.initialize()
     await init_mysql_pool()
-    logger.info(f"MCP Client started on port {CLIENT_PORT}")
+    logger.info(f"MCP Client started at {CLIENT_URL}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -869,6 +849,13 @@ async def shutdown_event():
     logger.info("MCP Client shutdown complete")
 
 # API Endpoints
+@app.get("/config")
+async def get_config():
+    """Get client configuration for UI."""
+    return {
+        "client_url": CLIENT_URL
+    }
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
@@ -917,6 +904,149 @@ async def chat_endpoint(request: ChatRequest):
         logger.error(f"Chat processing failed: {e}")
         raise HTTPException(status_code=500, detail=f"Chat processing failed: {str(e)}")
 
+@app.post("/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)):
+    """
+    Transcribe audio using Wyoming Whisper container.
+    Accepts audio file upload and returns transcribed text.
+    """
+    if not WYOMING_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Wyoming library not installed. Install with: pip install wyoming"
+        )
+    
+    try:
+        # Parse Wyoming URL (expecting tcp://host:port or just host:port)
+        whisper_url = WHISPER_URL.replace("http://", "").replace("https://", "")
+        if ":" in whisper_url:
+            host, port_str = whisper_url.rsplit(":", 1)
+            port = int(port_str)
+        else:
+            host = whisper_url
+            port = 10300  # Default Wyoming port
+        
+        logger.info(f"Connecting to Wyoming Whisper at {host}:{port}")
+        
+        # Read audio file content
+        audio_content = await file.read()
+        logger.info(f"Received audio: {file.filename}, {len(audio_content)} bytes, {file.content_type}")
+        
+        # Log audio format for debugging
+        if len(audio_content) >= 4:
+            header = audio_content[:4]
+            if header == b'RIFF':
+                logger.info("Audio format: WAV detected")
+            elif header == b'\x1a\x45\xdf\xa3':
+                logger.info("Audio format: WebM detected") 
+            else:
+                logger.info(f"Audio format: Unknown (header: {header.hex()})")
+        
+        # Wyoming expects WAV or raw PCM audio
+        # Browser should send in correct format (16kHz, mono)
+        
+        # Connect to Wyoming server
+        client = AsyncTcpClient(host, port)
+        
+        try:
+            await client.connect()
+            logger.info(f"Connected to Wyoming Whisper at {host}:{port}")
+            
+            # Send transcription request
+            await client.write_event(Transcribe(language="en").event())
+            
+            # Send audio data
+            # Wyoming expects 16kHz, 16-bit mono PCM
+            await client.write_event(
+                AudioStart(
+                    rate=16000,
+                    width=2,
+                    channels=1
+                ).event()
+            )
+            
+            # Send audio in chunks
+            chunk_size = 8192
+            for i in range(0, len(audio_content), chunk_size):
+                chunk = audio_content[i:i + chunk_size]
+                await client.write_event(
+                    AudioChunk(
+                        rate=16000,
+                        width=2,
+                        channels=1,
+                        audio=chunk
+                    ).event()
+                )
+            
+            await client.write_event(AudioStop().event())
+            logger.info("Sent AudioStop, waiting for transcript...")
+            
+            # Wait for transcript
+            transcript_text = None
+            event_count = 0
+            max_events = 100  # Prevent infinite loop
+            
+            while event_count < max_events:
+                event = await asyncio.wait_for(client.read_event(), timeout=10.0)
+                event_count += 1
+                
+                if event is None:
+                    logger.warning("Received None event, ending loop")
+                    break
+                
+                logger.debug(f"Received event type: {event.type}")
+                
+                if Transcript.is_type(event.type):
+                    transcript = Transcript.from_event(event)
+                    transcript_text = transcript.text
+                    logger.info(f"Received transcript: '{transcript_text}' (length: {len(transcript_text) if transcript_text else 0})")
+                    break
+            
+            if transcript_text is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"No transcript event received after {event_count} events. Check Wyoming Whisper logs."
+                )
+            
+            # Empty transcript means no speech detected or audio format issue
+            if not transcript_text or transcript_text.strip() == "":
+                logger.warning("Empty transcript received - possible causes: no speech, wrong audio format, or audio too short")
+                # Return empty text instead of error - let user know nothing was transcribed
+                return {
+                    "text": "",
+                    "status": "success",
+                    "warning": "No speech detected. Please speak clearly and try again."
+                }
+            
+            logger.info(f"Transcription successful: {transcript_text[:50]}...")
+            
+            return {
+                "text": transcript_text,
+                "status": "success"
+            }
+        
+        finally:
+            await client.disconnect()
+            
+    except ValueError as e:
+        logger.error(f"Invalid Whisper URL format: {WHISPER_URL} - {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Invalid Whisper URL configuration: {WHISPER_URL}"
+        )
+    except ConnectionRefusedError:
+        logger.error(f"Failed to connect to Wyoming Whisper at {host}:{port}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Whisper service unavailable at {host}:{port}. Verify container is running."
+        )
+    except asyncio.TimeoutError:
+        logger.error("Wyoming Whisper transcription timeout")
+        raise HTTPException(status_code=504, detail="Transcription service timeout")
+    except Exception as e:
+        logger.error(f"Transcription failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
 class TestToolRequest(BaseModel):
     tool_name: str = Field(..., description="Name of the tool to test")
     arguments: Dict[str, Any] = Field(default={}, description="Tool arguments")
@@ -937,6 +1067,7 @@ async def root():
         "mcp_server": MCP_SERVER_URL,
         "endpoints": {
             "chat": "POST /chat",
+            "transcribe": "POST /transcribe",
             "health": "GET /health", 
             "tools": "GET /tools",
             "test-tool": "POST /test-tool",

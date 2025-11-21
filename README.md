@@ -24,6 +24,10 @@ A Python FastAPI server implementing a Model Context Protocol (MCP) server focus
 ### 🖥️ **MCP Server** (Port 8000)
 - **Network Time Tool**: Retrieves accurate time from configurable NTP servers
 - **Ping Tool**: Tests network connectivity and latency to specified hosts
+- **Sunrise/Sunset Tool**: Get sunrise, sunset, solar noon times for your location
+  - Uses sunrise-sunset.org free API
+  - Configurable location (latitude/longitude)
+  - Returns day length and twilight times
 - **Home Assistant Integration**: Control smart home devices and query sensor states
   - Query device states (sensors, thermostats, etc.)
   - Control lights with brightness
@@ -37,6 +41,10 @@ A Python FastAPI server implementing a Model Context Protocol (MCP) server focus
 ### 🤖 **MCP Client** (Port 8001)
 - **Ollama Integration**: Local LLM integration with Qwen2.5:7b-instruct
 - **Intelligent Tool Routing**: Automatic detection of time, network, and smart home queries
+- **Timezone Support**: Automatic timezone conversion for all time-based queries
+  - Configure local timezone in `.env.client`
+  - LLM converts UTC times to local timezone
+  - Natural language formatting (e.g., "7:33 PM Pacific Time")
 - **Direct Tool Access**: Manual tool testing endpoints
 - **Session Management**: Context-aware conversations
 - **Smart Home Shortcuts**: Natural language queries for Home Assistant devices
@@ -44,6 +52,11 @@ A Python FastAPI server implementing a Model Context Protocol (MCP) server focus
 ### 🌐 **Web UI** (Port 5173)
 - **Modern Chat Interface**: Sleek, responsive dark-themed chat UI built with React + Vite
 - **Real-time Interaction**: Send messages and receive responses from the MCP client instantly
+- **🎤 Voice Input**: Click-to-record voice messages with Wyoming Whisper transcription
+  - Browser-based audio recording (16kHz mono WAV)
+  - Wyoming protocol integration for speech-to-text
+  - Real-time transcription feedback
+  - Edit transcription before sending
 - **Tool Visibility**: Visual badges showing which MCP tools were used in each response
 - **Auto-scroll**: Automatically scrolls to the latest messages for seamless conversation flow
 - **Session Persistence**: Maintains conversation context throughout your session
@@ -75,15 +88,25 @@ A Python FastAPI server implementing a Model Context Protocol (MCP) server focus
 >
 > 🏠 **Setting up Home Assistant?** See [docs/HOME_ASSISTANT.md](./docs/HOME_ASSISTANT.md) for complete Home Assistant integration documentation.
 >
+> 🎤 **Setting up Voice Input with Wyoming Whisper?** See [docs/WYOMING_WHISPER.md](./docs/WYOMING_WHISPER.md) for Wyoming protocol integration and troubleshooting.
+>
 > 💾 **Setting up MySQL for feedback?** See [docs/MYSQL_SETUP.md](./docs/MYSQL_SETUP.md) for MySQL integration and analytics setup.
 >
-> 🤖 **Building AI agents for this project?** See [.github/copilot-instructions.md](./.github/copilot-instructions.md) for AI coding agent guidance.
+> � **Testing Guide:** See [docs/TESTING.md](./docs/TESTING.md) for comprehensive testing documentation.
+>
+> 🔒 **Security Testing:** See [docs/SECURITY_TESTING.md](./docs/SECURITY_TESTING.md) for security analysis and recommendations.
+>
+> �🤖 **Building AI agents for this project?** See [.github/copilot-instructions.md](./.github/copilot-instructions.md) for AI coding agent guidance.
 >
 > 🍎 **macOS Developer?** See [docs/MACOS_DEV.md](./docs/MACOS_DEV.md) for platform-specific setup and optimizations.
 >
 > 🐧 **Linux Developer?** See [docs/LINUX_DEV.md](./docs/LINUX_DEV.md) for Linux/Ubuntu environment setup.
 >
 > 🪟 **Windows Developer?** See [docs/WINDOWS_DEV.md](./docs/WINDOWS_DEV.md) for Windows 10/11 environment setup.
+>
+> 📝 **Project Summary:** See [docs/PROJECT_SUMMARY.md](./docs/PROJECT_SUMMARY.md) for a high-level overview of the entire system.
+>
+> 📅 **Changelog:** See [docs/CHANGELOG.md](./docs/CHANGELOG.md) for version history and recent changes.
 
 ## Quick Start
 
@@ -430,6 +453,17 @@ The server will:
 - `MCP_SERVER_URL`: MCP server URL (default: http://localhost:8000)
 - `CLIENT_PORT`: Client server port (default: 8001)
 
+### Sunrise/Sunset Configuration (.env.client)
+- `SUN_LAT`: Latitude for your location (required for sunrise/sunset queries)
+  - Example: `47.0012` for Roy, Washington
+  - Find your coordinates at https://www.latlong.net/
+- `SUN_LNG`: Longitude for your location (required for sunrise/sunset queries)
+  - Example: `-122.5421` for Roy, Washington
+- `LOCAL_TIMEZONE`: IANA timezone identifier (default: UTC)
+  - Example: `America/Los_Angeles`, `America/New_York`, `Europe/London`
+  - Find your timezone at https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+  - Used by LLM to convert UTC times to local timezone in natural language
+
 See [.env.example](./.env.example) and [.env.client.example](./.env.client.example) for complete configuration templates.
 
 ## API Endpoints
@@ -462,6 +496,18 @@ Tests network connectivity and latency.
 - **Parameters**: 
   - `hostname` (required): Hostname or IP address to ping
 - **Returns**: Host status, latency, packet loss, and output snippet
+
+### Astronomical Tools
+
+#### get_sun_times
+Get sunrise and sunset times for a configured location.
+- **Parameters**:
+  - `date` (optional): Date in YYYY-MM-DD format (defaults to today)
+  - `formatted` (optional): 0 for ISO 8601 (24-hour), 1 for 12-hour AM/PM (default: 0)
+- **Returns**: Sunrise, sunset, solar noon, day length, twilight times
+- **Configuration**: Set `SUN_LAT` and `SUN_LNG` in `.env.client`
+- **Timezone**: LLM automatically converts UTC times to `LOCAL_TIMEZONE`
+- **Example**: "What time is sunset today?" → "Sunset is at 4:33 PM Pacific Time"
 
 ### Home Assistant Tools
 
@@ -839,10 +885,25 @@ This project was developed and tested on macOS. For platform-specific developmen
 - **Cross-platform Support**: Tested on macOS, designed for Linux/Windows compatibility
 
 #### 📚 **Documentation**
-- **Comprehensive README**: Setup, configuration, and usage instructions
-- **Environment Templates**: `.env.example` with detailed comments
-- **API Examples**: Complete cURL examples for all endpoints
-- **Configuration Guide**: Detailed explanation of all environment variables
+- **[MCP Explained](./docs/MCP_EXPLAINED.md)**: Understanding Model Context Protocol concepts
+- **[Client Architecture](./docs/CLIENT_ARCHITECTURE.md)**: How the MCP client works with Ollama
+- **[Home Assistant Setup](./docs/HOME_ASSISTANT.md)**: Smart home integration guide
+- **[Wyoming Whisper Integration](./docs/WYOMING_WHISPER.md)**: Voice input with Wyoming protocol
+- **[Voice Implementation Details](./docs/VOICE_IMPLEMENTATION.md)**: Technical implementation of voice features
+- **[Voice Input Guide](./docs/VOICE_INPUT.md)**: User guide for voice input
+- **[Voice Quickstart](./docs/VOICE_QUICKSTART.md)**: Quick setup guide for voice features
+- **[MySQL Setup & Analytics](./docs/MYSQL_SETUP.md)**: Feedback system and analytics
+- **[Testing Guide](./docs/TESTING.md)**: Comprehensive testing documentation
+- **[Security Testing](./docs/SECURITY_TESTING.md)**: Security analysis and recommendations
+- **[Vulnerabilities](./docs/VULNERABILITIES.md)**: Known vulnerabilities and mitigations
+- **[Docker Setup](./docs/DOCKER.md)**: Docker deployment guide
+- **[Project Summary](./docs/PROJECT_SUMMARY.md)**: High-level system overview
+- **[Changelog](./docs/CHANGELOG.md)**: Version history and updates
+- **[macOS Development](./docs/MACOS_DEV.md)**: macOS-specific setup
+- **[Linux Development](./docs/LINUX_DEV.md)**: Linux environment setup
+- **[Windows Development](./docs/WINDOWS_DEV.md)**: Windows environment setup
+- **[Client README](./docs/CLIENT_README.md)**: Client-specific documentation
+- **[Copilot Instructions](./.github/copilot-instructions.md)**: AI coding agent guidance
 
 #### 🔒 **Security & Best Practices**
 - **Environment Variables**: Sensitive configuration excluded from version control

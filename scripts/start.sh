@@ -83,7 +83,7 @@ fi
 
 # Start MCP Server (port 8000) with auto-reload
 echo -e "${GREEN}[1/3] Starting MCP Server on port 8000...${NC}"
-uvicorn server:app --reload --port 8000 > "$SERVER_LOG" 2>&1 &
+uvicorn server:app --reload --host 0.0.0.0 --port 8000 > "$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 echo -e "  PID: $SERVER_PID"
 
@@ -99,7 +99,7 @@ fi
 
 # Start MCP Client (port 8001) with auto-reload
 echo -e "${GREEN}[2/3] Starting MCP Client on port 8001...${NC}"
-uvicorn client:app --reload --port 8001 > "$CLIENT_LOG" 2>&1 &
+uvicorn client:app --reload --host 0.0.0.0 --port 8001 > "$CLIENT_LOG" 2>&1 &
 CLIENT_PID=$!
 echo -e "  PID: $CLIENT_PID"
 

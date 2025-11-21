@@ -527,5 +527,50 @@ class TestRootEndpoint:
         assert "health" in endpoints
         assert "tools" in endpoints
         assert "feedback" in endpoints  # New feedback endpoint
+        assert "transcribe" in endpoints  # Voice input endpoint
+
+
+class TestTranscribeEndpoint:
+    """Test audio transcription endpoint."""
+    
+    @pytest.mark.asyncio
+    async def test_transcribe_endpoint_requires_file(
+        self, 
+        http_client: AsyncClient, 
+        client_url: str
+    ):
+        """Test transcribe endpoint requires audio file."""
+        # Call without file should return 422 (validation error)
+        response = await http_client.post(f"{client_url}/transcribe")
+        assert response.status_code == 422
+    
+    @pytest.mark.asyncio
+    async def test_transcribe_endpoint_with_mock_audio(
+        self, 
+        http_client: AsyncClient, 
+        client_url: str
+    ):
+        """Test transcribe endpoint with mock audio data."""
+        # Create a minimal mock WebM file (just bytes, won't actually work with Whisper)
+        mock_audio = b"mock audio data"
+        
+        # This will fail if Whisper is not available, which is expected
+        response = await http_client.post(
+            f"{client_url}/transcribe",
+            files={"file": ("test.webm", mock_audio, "audio/webm")}
+        )
+        
+        # Expected outcomes:
+        # - 503: Whisper service unavailable (most likely in test environment)
+        # - 502: Whisper returned error (invalid audio format)
+        # - 504: Timeout
+        # - 200: Success (if Whisper is running and somehow processes mock data)
+        assert response.status_code in [200, 502, 503, 504]
+        
+        if response.status_code == 200:
+            data = response.json()
+            assert "text" in data
+            assert "status" in data
+            assert data["status"] == "success"
 
 

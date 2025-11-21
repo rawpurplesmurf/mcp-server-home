@@ -19,6 +19,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Metrics and observability integration
 - Streaming responses in the Web UI
 
+### Unreleased (2025-11-17) - Voice & Wyoming updates
+
+- Add Wyoming protocol support for transcription (rhasspy/wyoming-whisper).
+- Browser-side WAV encoder and AudioContext-based recording (16kHz, 16-bit, mono).
+- Updated `client.py` `/transcribe` endpoint to stream audio to Wyoming using `wyoming.AsyncTcpClient` and Wyoming events (Transcribe/AudioStart/AudioChunk/AudioStop/Transcript).
+- Added `ui/src/wavEncoder.js` and updated `ui/src/App.jsx` to produce WAV in-browser and upload to client.
+- Added `scripts/test-wyoming.sh` to test TCP connectivity and service info.
+- Installed and documented Python dependencies: `wyoming`, `python-multipart`; added to `client_requirements.txt`.
+- Added `docs/WYOMING_WHISPER.md`, `docs/VOICE_IMPLEMENTATION.md`, `docs/VOICE_INPUT.md`, `docs/VOICE_QUICKSTART.md` (voice docs refreshed).
+- Updated `README.md` to link new voice docs and reflect Wyoming-based workflow.
+- Added `ui/src/wavEncoder.js` and removed experimental server-side conversion path as default.
+- Tests: ran backend pytest (48 tests) and UI Playwright (12 tests) — all passed in local environment.
+- Misc: removed temporary test script used during development (`test_wyoming.py`) and cleaned up interim changes.
+
+### Unreleased (2025-11-17) - Sunrise/Sunset & Timezone Support
+
+#### Added
+- **Sunrise/Sunset Tool**: New `get_sun_times` tool using sunrise-sunset.org free API
+  - Returns sunrise, sunset, solar noon, day length, and twilight times
+  - Configurable location via `SUN_LAT` and `SUN_LNG` in `.env.client`
+  - Coordinates default to Roy, Washington (47.0012, -122.5421)
+  - API returns times in UTC (ISO 8601 format)
+- **Local Timezone Support**: Added `LOCAL_TIMEZONE` configuration
+  - Set in `.env.client` (e.g., `America/Los_Angeles`)
+  - LLM automatically converts UTC times to local timezone
+  - Natural language formatting (e.g., "7:33 PM Pacific Time")
+  - Context passed to LLM in both initial and final prompts
+
+#### Changed
+- **Removed Direct Shortcuts**: Time and ping queries now go through LLM for natural formatting
+  - Only Home Assistant device controls still use direct shortcuts
+  - Better conversational responses instead of raw data dumps
+  - Maintains fast shortcuts for light/switch control where intent is clear
+- **Updated Prompts**: LLM system prompt includes timezone context and tool instructions
+  - Tool results prompt includes timezone conversion instructions
+  - Improved natural language responses for all time-based queries
+
+#### Configuration
+- Added to `.env.client` and `.env.client.example`:
+  - `SUN_LAT`: Latitude for location (required for sunrise/sunset)
+  - `SUN_LNG`: Longitude for location (required for sunrise/sunset)
+  - `LOCAL_TIMEZONE`: IANA timezone identifier (e.g., `America/Los_Angeles`)
+- Configuration documented with examples and reference links
+
+
 ---
 
 ## [v2.6.0] - 2025-11-12

@@ -1,0 +1,163 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-client
+  namespace: mcp-system
+  labels:
+    app: mcp-client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-client
+  template:
+    metadata:
+      labels:
+        app: mcp-client
+    spec:
+      containers:
+      - name: mcp-client
+        image: macmini.localdomain:7235/dk-docker/mcp-client:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8001
+          name: http
+        env:
+        - name: OLLAMA_URL
+          valueFrom:
+            secretKeyRef:
+              name: mcp-secrets
+              key: OLLAMA_URL
+        - name: OLLAMA_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-config
+              key: OLLAMA_MODEL
+        - name: MCP_SERVER_URL
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-config
+              key: MCP_SERVER_URL
+        - name: CLIENT_URL
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-config
+              key: CLIENT_URL
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-config
+              key: REDIS_PORT
+        - name: MYSQL_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-config
+              key: MYSQL_HOST
+        - name: MYSQL_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-config
+              key: MYSQL_PORT
+        - name: MYSQL_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-config
+              key: MYSQL_DATABASE
+        - name: MYSQL_USER
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-config
+              key: MYSQL_USER
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mcp-secrets
+              key: MYSQL_PASSWORD
+        - name: MYSQL_POOL_SIZE
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-config
+              key: MYSQL_POOL_SIZE
+        - name: WHISPER_URL
+          valueFrom:
+            secretKeyRef:
+              name: mcp-secrets
+              key: WHISPER_URL
+        - name: SUN_LAT
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-config
+              key: SUN_LAT
+        - name: SUN_LNG
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-config
+              key: SUN_LNG
+        - name: LOCAL_TIMEZONE
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-config
+              key: LOCAL_TIMEZONE
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-config
+              key: LOG_LEVEL
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-client-service
+  namespace: mcp-system
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: mcp-client.microk8s.internal
+spec:
+  type: LoadBalancer
+  selector:
+    app: mcp-client
+  ports:
+  - port: 8001
+    targetPort: 8001
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mcp-client
+  namespace: mcp-system
+spec:
+  ingressClassName: public
+  rules:
+  - host: mcp-client.microk8s.internal
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: mcp-client-service
+            port:
+              number: 8001

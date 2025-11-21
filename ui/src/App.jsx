@@ -1,12 +1,22 @@
 import { useState, useRef, useEffect } from 'react'
 import './App.css'
+import { WavEncoder } from './wavEncoder'
 
 function App() {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [sessionId] = useState(`session-${Date.now()}`)
+  const [clientUrl, setClientUrl] = useState(null)
   const messagesEndRef = useRef(null)
+  
+  // Audio recording state
+  const [isRecording, setIsRecording] = useState(false)
+  const [isTranscribing, setIsTranscribing] = useState(false)
+  const audioContextRef = useRef(null)
+  const mediaStreamRef = useRef(null)
+  const processorRef = useRef(null)
+  const audioChunksRef = useRef([])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -16,24 +26,65 @@ function App() {
     scrollToBottom()
   }, [messages])
 
-  const sendMessage = async (e) => {
-    e.preventDefault()
-    if (!input.trim() || isLoading) return
+  // Fetch client URL configuration on mount
+  useEffect(() => {
+    const fetchConfig = async () => {
+      // Determine the correct client URL based on environment
+      const getClientUrl = () => {
+        const hostname = window.location.hostname
+        
+        // Local development
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+          return 'http://localhost:8001'
+        }
+        
+        // Kubernetes deployment - replace mcp-ui with mcp-client
+        if (hostname.includes('mcp-ui')) {
+          return `http://${hostname.replace('mcp-ui', 'mcp-client')}`
+        }
+        
+        // Default fallback - assume client is on same host, port 8001
+        return `http://${hostname}:8001`
+      }
+      
+      const fallbackUrl = getClientUrl()
+      
+      try {
+        // Try to fetch config from the backend
+        const response = await fetch(`${fallbackUrl}/config`)
+        if (response.ok) {
+          const config = await response.json()
+          setClientUrl(config.client_url)
+          return
+        }
+      } catch (error) {
+        console.warn('Failed to fetch config from backend, using fallback URL:', error)
+      }
+      
+      // Use fallback if config fetch fails
+      setClientUrl(fallbackUrl)
+    }
+    fetchConfig()
+  }, [])
 
-    const userMessage = input.trim()
-    setInput('')
+  const sendMessage = async (e, transcribedText = null) => {
+    if (e) e.preventDefault()
+    
+    // Use transcribed text if provided, otherwise use input field
+    const messageText = transcribedText || input.trim()
+    if (!messageText || isLoading || !clientUrl) return
+
+    const userMessage = messageText
+    if (!transcribedText) {
+      setInput('')
+    }
     
     // Add user message
     setMessages(prev => [...prev, { role: 'user', content: userMessage }])
     setIsLoading(true)
 
     try {
-      // Use relative URL for Docker compatibility, fallback to localhost for development
-      const baseUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-        ? 'http://localhost:8001' 
-        : `http://${window.location.hostname}:8001`
-      
-      const response = await fetch(`${baseUrl}/chat`, {
+      const response = await fetch(`${clientUrl}/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -72,12 +123,10 @@ function App() {
   }
 
   const submitFeedback = async (interactionId, sessionId, feedback, messageIndex) => {
+    if (!clientUrl) return
+    
     try {
-      const baseUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-        ? 'http://localhost:8001' 
-        : `http://${window.location.hostname}:8001`
-        
-      const response = await fetch(`${baseUrl}/feedback`, {
+      const response = await fetch(`${clientUrl}/feedback`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -111,12 +160,136 @@ function App() {
     setMessages([])
   }
 
+  const startRecording = async () => {
+    try {
+      // Create AudioContext with 16kHz sample rate for Wyoming
+      const AudioContext = window.AudioContext || window.webkitAudioContext
+      const audioContext = new AudioContext({ sampleRate: 16000 })
+      audioContextRef.current = audioContext
+
+      // Get microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 16000,
+          echoCancellation: true,
+          noiseSuppression: true
+        }
+      })
+      mediaStreamRef.current = stream
+
+      const source = audioContext.createMediaStreamSource(stream)
+      
+      // Use ScriptProcessorNode to capture raw PCM data
+      const bufferSize = 4096
+      const processor = audioContext.createScriptProcessor(bufferSize, 1, 1)
+      processorRef.current = processor
+
+      audioChunksRef.current = []
+
+      processor.onaudioprocess = (e) => {
+        const inputData = e.inputBuffer.getChannelData(0)
+        // Copy the Float32Array data
+        const chunk = new Float32Array(inputData)
+        audioChunksRef.current.push(chunk)
+      }
+
+      source.connect(processor)
+      processor.connect(audioContext.destination)
+
+      setIsRecording(true)
+    } catch (error) {
+      console.error('Error accessing microphone:', error)
+      alert('Failed to access microphone. Please check permissions.')
+    }
+  }
+
+  const stopRecording = async () => {
+    if (!isRecording) return
+
+    // Stop audio processing
+    if (processorRef.current) {
+      processorRef.current.disconnect()
+      processorRef.current = null
+    }
+
+    if (audioContextRef.current) {
+      await audioContextRef.current.close()
+      audioContextRef.current = null
+    }
+
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop())
+      mediaStreamRef.current = null
+    }
+
+    setIsRecording(false)
+
+    // Combine all audio chunks
+    const totalLength = audioChunksRef.current.reduce((acc, chunk) => acc + chunk.length, 0)
+    const combined = new Float32Array(totalLength)
+    let offset = 0
+    for (const chunk of audioChunksRef.current) {
+      combined.set(chunk, offset)
+      offset += chunk.length
+    }
+
+    // Encode to WAV
+    const encoder = new WavEncoder(16000, 1, 16)
+    const wavBlob = encoder.encodeWAV(combined)
+
+    // Send to transcription
+    await transcribeAudio(wavBlob, 'wav')
+  }
+
+  const transcribeAudio = async (audioBlob, extension = 'webm') => {
+    if (!clientUrl) return
+    
+    setIsTranscribing(true)
+    
+    try {
+      // Create form data with audio file
+      const formData = new FormData()
+      formData.append('file', audioBlob, `audio.${extension}`)
+      
+      const response = await fetch(`${clientUrl}/transcribe`, {
+        method: 'POST',
+        body: formData
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const data = await response.json()
+      
+      // Set the transcribed text and auto-send
+      if (data.text && data.text.trim()) {
+        const transcribedText = data.text
+        setInput(transcribedText)
+        
+        // Auto-send the transcribed text
+        setIsTranscribing(false)
+        await sendMessage(null, transcribedText)
+      } else {
+        // Show warning if provided, otherwise generic message
+        const message = data.warning || 'No speech detected. Please speak clearly and try recording again.'
+        alert(message)
+        setIsTranscribing(false)
+      }
+    } catch (error) {
+      console.error('Transcription error:', error)
+      alert(`Transcription failed: ${error.message}. Make sure the Whisper service is running.`)
+      setIsTranscribing(false)
+    }
+  }
+
   return (
     <div className="app">
       <header className="header">
         <div className="header-content">
           <h1>🤖 MCP Chat</h1>
-          <p>Model Context Protocol - Network Tools Assistant</p>
+          <p>Model Context Protocol - Network Tools & Voice Assistant</p>
         </div>
         {messages.length > 0 && (
           <button onClick={clearChat} className="clear-btn">
@@ -129,13 +302,7 @@ function App() {
         {messages.length === 0 && (
           <div className="welcome">
             <h2>Welcome to MCP Chat!</h2>
-            <p>Ask me about:</p>
-            <ul>
-              <li>🕐 Current time (via NTP servers)</li>
-              <li>🏓 Network connectivity (ping hosts)</li>
-              <li>💬 General questions</li>
-            </ul>
-            <p className="hint">Try: "What time is it?" or "Can you ping google.com?"</p>
+            <p className="hint">Start typing or use the 🎤 button to speak your message!</p>
           </div>
         )}
 
@@ -299,15 +466,17 @@ function App() {
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask me anything..."
           className="message-input"
-          disabled={isLoading}
+          disabled={isLoading || isRecording || isTranscribing}
           autoFocus
         />
         <button 
-          type="submit" 
-          disabled={isLoading || !input.trim()}
-          className="send-btn"
+          type="button"
+          onClick={isRecording ? stopRecording : startRecording}
+          disabled={isLoading || isTranscribing}
+          className={`record-btn ${isRecording ? 'recording' : ''}`}
+          title={isRecording ? 'Stop recording' : 'Start voice input'}
         >
-          {isLoading ? '⏳' : '📤'}
+          {isTranscribing ? '⏳' : isRecording ? '⏹️' : '🎤'}
         </button>
       </form>
     </div>
